@@ -3,13 +3,15 @@ package cache
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/gob"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
-	"encoding/gob"
 
 	"github.com/gin-contrib/cache/persistence"
 	"github.com/gin-gonic/gin"
@@ -28,6 +30,7 @@ type responseCache struct {
 	Header http.Header
 	Data   []byte
 }
+
 // RegisterResponseCacheGob registers the responseCache type with the encoding/gob package
 func RegisterResponseCacheGob() {
 	gob.Register(responseCache{})
@@ -236,6 +239,77 @@ func CachePageWithoutHeader(store persistence.CacheStore, expire time.Duration, 
 		} else {
 			c.Writer.WriteHeader(cache.Status)
 			c.Writer.Write(cache.Data)
+		}
+	}
+}
+
+func CacheAll(store persistence.CacheStore, expire time.Duration, handle gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var cache responseCache
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(c.Request.Body)
+
+		key := fmt.Sprintf("%s-%s-%s", c.Request.Method, c.Request.URL, buf.String())
+
+		if err := store.Get(key, &cache); err != nil {
+			c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(buf.Bytes()))
+
+			if err != persistence.ErrCacheMiss {
+				log.Println(err.Error())
+			}
+			// replace writer
+			writer := newCachedWriter(store, expire, c.Writer, key)
+			c.Writer = writer
+			handle(c)
+
+			// Drop caches of aborted contexts
+			if c.IsAborted() {
+				store.Delete(key)
+			}
+		} else {
+			c.Writer.WriteHeader(cache.Status)
+			for k, vals := range cache.Header {
+				for _, v := range vals {
+					c.Writer.Header().Set(k, v)
+				}
+			}
+			c.Writer.Write(cache.Data)
+		}
+	}
+}
+
+func CacheMiddleware(store persistence.CacheStore, expire time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var cache responseCache
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(c.Request.Body)
+
+		key := fmt.Sprintf("%s-%s-%s", c.Request.Method, c.Request.URL, buf.String())
+
+		if err := store.Get(key, &cache); err != nil {
+			c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(buf.Bytes()))
+
+			if err != persistence.ErrCacheMiss {
+				log.Println(err.Error())
+			}
+			// replace writer
+			writer := newCachedWriter(store, expire, c.Writer, key)
+			c.Writer = writer
+			c.Next()
+
+			// Drop caches of aborted contexts
+			if c.IsAborted() {
+				store.Delete(key)
+			}
+		} else {
+			c.Writer.WriteHeader(cache.Status)
+			for k, vals := range cache.Header {
+				for _, v := range vals {
+					c.Writer.Header().Set(k, v)
+				}
+			}
+			c.Writer.Write(cache.Data)
+			c.Abort()
 		}
 	}
 }

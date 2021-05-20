@@ -1,13 +1,13 @@
 package cache
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-	"encoding/gob"
-	"bytes"
 
 	"github.com/gin-contrib/cache/persistence"
 	"github.com/gin-gonic/gin"
@@ -283,17 +283,17 @@ func TestCachePageWithoutQuery(t *testing.T) {
 
 func TestRegisterResponseCacheGob(t *testing.T) {
 	RegisterResponseCacheGob()
-	r := responseCache{Status:200, Data: []byte("test"),}
+	r := responseCache{Status: 200, Data: []byte("test")}
 	mCache := new(bytes.Buffer)
 	encCache := gob.NewEncoder(mCache)
 	err := encCache.Encode(r)
 	assert.Nil(t, err)
-	
+
 	var decodedResp responseCache
 	pCache := bytes.NewBuffer(mCache.Bytes())
 	decCache := gob.NewDecoder(pCache)
 	err = decCache.Decode(&decodedResp)
-	assert.Nil(t,err)
+	assert.Nil(t, err)
 
 }
 func performRequest(method, target string, router *gin.Engine) *httptest.ResponseRecorder {
@@ -321,4 +321,27 @@ func (c *memoryDelayStore) Set(key string, value interface{}, expires time.Durat
 func (c *memoryDelayStore) Add(key string, value interface{}, expires time.Duration) error {
 	time.Sleep(time.Millisecond * 3)
 	return c.InMemoryStore.Add(key, value, expires)
+}
+
+func Test1(t *testing.T) {
+	r := gin.Default()
+
+	store := persistence.NewInMemoryStore(time.Second)
+
+	r.GET("/ping", func(c *gin.Context) {
+		c.String(200, "pong "+fmt.Sprint(time.Now().Unix()))
+	})
+	// Cached Page
+	r.POST("/cache_ping", CacheAll(store, 10*time.Second, func(c *gin.Context) {
+		time.Sleep(1 * time.Second)
+		c.String(200, "pong "+fmt.Sprint(time.Now().Unix()))
+	}))
+
+	r.POST("/cache_ping2", CacheMiddleware(store, 10*time.Second), func(c *gin.Context) {
+		time.Sleep(1 * time.Second)
+		c.String(200, "pong2 "+fmt.Sprint(time.Now().Unix()))
+	})
+
+	// Listen and Server in 0.0.0.0:8080
+	r.Run(":8080")
 }
