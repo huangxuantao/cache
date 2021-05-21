@@ -280,6 +280,11 @@ func CacheAll(store persistence.CacheStore, expire time.Duration, handle gin.Han
 
 func CacheMiddleware(store persistence.CacheStore, expire time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if store == nil {
+			c.Next()
+			return
+		}
+
 		var cache responseCache
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(c.Request.Body)
